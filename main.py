@@ -1,157 +1,106 @@
-# ==========================================
-# Advanced Time Series Forecasting using LSTM
-# ==========================================
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import shap
 
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error
-
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.layers import LSTM, Dense
 from tensorflow.keras.optimizers import Adam
 
-# -------------------------------
-# 1. Load Dataset
-# -------------------------------
-# Download "exchange_rate.csv" from:
-# https://archive.ics.uci.edu/ml/datasets/Exchange+Rate+Dataset
-
+# -----------------------------
+# Load and preprocess data
+# -----------------------------
 data = pd.read_csv("exchange_rate.csv")
-
-# Drop date column if exists
 if 'date' in data.columns:
-    data = data.drop(columns=['date'])
-
-# Handle missing values
+    data.drop(columns=['date'], inplace=True)
 data.fillna(method='ffill', inplace=True)
 
-print("Dataset shape:", data.shape)
-
-# -------------------------------
-# 2. Scale Data
-# -------------------------------
 scaler = MinMaxScaler()
-scaled_data = scaler.fit_transform(data)
+scaled = scaler.fit_transform(data)
 
-# -------------------------------
-# 3. Create Sequences
-# -------------------------------
-def create_sequences(data, window_size=30):
+def create_sequences(data, window=30):
     X, y = [], []
-    for i in range(window_size, len(data)):
-        X.append(data[i-window_size:i])
-        y.append(data[i, 0])  # predict first feature
+    for i in range(window, len(data)):
+        X.append(data[i-window:i])
+        y.append(data[i])
     return np.array(X), np.array(y)
 
-WINDOW_SIZE = 30
-X, y = create_sequences(scaled_data, WINDOW_SIZE)
+X, y = create_sequences(scaled)
 
-# -------------------------------
-# 4. Train / Val / Test Split
-# -------------------------------
-train_size = int(0.7 * len(X))
-val_size = int(0.85 * len(X))
+# -----------------------------
+# Rolling-origin CV
+# -----------------------------
+def rolling_cv(X, y, units_list, lr_list):
+    results = []
+    fold = int(0.15 * len(X))
 
-X_train, y_train = X[:train_size], y[:train_size]
-X_val, y_val = X[train_size:val_size], y[train_size:val_size]
-X_test, y_test = X[val_size:], y[val_size:]
+    for units in units_list:
+        for lr in lr_list:
+            losses = []
+            for i in range(fold, len(X)-fold, fold):
+                X_tr, y_tr = X[:i], y[:i]
+                X_val, y_val = X[i:i+fold], y[i:i+fold]
 
-# -------------------------------
-# 5. Build LSTM Model
-# -------------------------------
+                model = Sequential([
+                    LSTM(units, input_shape=(X.shape[1], X.shape[2])),
+                    Dense(y.shape[1])
+                ])
+                model.compile(optimizer=Adam(lr), loss="mse")
+                model.fit(X_tr, y_tr, epochs=10, batch_size=32, verbose=0)
+                losses.append(model.evaluate(X_val, y_val, verbose=0))
+
+            results.append((units, lr, np.mean(losses)))
+    return sorted(results, key=lambda x: x[2])
+
+best = rolling_cv(X, y, [32, 64], [0.001, 0.0005])[0]
+units, lr, _ = best
+
+# -----------------------------
+# Train final model
+# -----------------------------
 model = Sequential([
-    LSTM(64, input_shape=(X_train.shape[1], X_train.shape[2])),
-    Dropout(0.2),
-    Dense(1)
+    LSTM(units, input_shape=(X.shape[1], X.shape[2])),
+    Dense(y.shape[1])
 ])
+model.compile(optimizer=Adam(lr), loss="mse")
+model.fit(X, y, epochs=25, batch_size=32, verbose=1)
 
-model.compile(
-    optimizer=Adam(learning_rate=0.001),
-    loss='mse'
-)
+# -----------------------------
+# Evaluation
+# -----------------------------
+pred = model.predict(X[-200:])
+true = y[-200:]
 
-model.summary()
+pred_inv = scaler.inverse_transform(pred)
+true_inv = scaler.inverse_transform(true)
 
-# -------------------------------
-# 6. Train Model
-# -------------------------------
-history = model.fit(
-    X_train, y_train,
-    epochs=25,
-    batch_size=32,
-    validation_data=(X_val, y_val),
-    verbose=1
-)
+mae = mean_absolute_error(true_inv, pred_inv)
+rmse = np.sqrt(mean_squared_error(true_inv, pred_inv))
 
-# -------------------------------
-# 7. Predictions
-# -------------------------------
-y_pred = model.predict(X_test)
-
-# Inverse scaling
-y_test_inv = scaler.inverse_transform(
-    np.hstack([y_test.reshape(-1,1),
-               np.zeros((len(y_test), scaled_data.shape[1]-1))])
-)[:,0]
-
-y_pred_inv = scaler.inverse_transform(
-    np.hstack([y_pred,
-               np.zeros((len(y_pred), scaled_data.shape[1]-1))])
-)[:,0]
-
-# -------------------------------
-# 8. Evaluation Metrics
-# -------------------------------
-mae = mean_absolute_error(y_test_inv, y_pred_inv)
-rmse = np.sqrt(mean_squared_error(y_test_inv, y_pred_inv))
-mape = np.mean(np.abs((y_test_inv - y_pred_inv) / y_test_inv)) * 100
-
-direction_true = np.sign(np.diff(y_test_inv))
-direction_pred = np.sign(np.diff(y_pred_inv))
-directional_accuracy = np.mean(direction_true == direction_pred)
-
-print("\nEvaluation Metrics")
-print("------------------")
-print("MAE :", mae)
+print("MAE:", mae)
 print("RMSE:", rmse)
-print("MAPE:", mape)
-print("Directional Accuracy:", directional_accuracy)
 
-# -------------------------------
-# 9. Visualization
-# -------------------------------
-
-# Training vs Validation Loss
-plt.figure()
-plt.plot(history.history['loss'], label='Training Loss')
-plt.plot(history.history['val_loss'], label='Validation Loss')
-plt.xlabel("Epochs")
-plt.ylabel("Loss")
-plt.title("Training vs Validation Loss")
+# -----------------------------
+# Visualization
+# -----------------------------
+plt.plot(true_inv[:,0], label="Actual")
+plt.plot(pred_inv[:,0], label="Predicted")
+plt.title("Actual vs Predicted (Primary Currency)")
 plt.legend()
 plt.show()
 
-# Actual vs Predicted
-plt.figure()
-plt.plot(y_test_inv[:200], label='Actual')
-plt.plot(y_pred_inv[:200], label='Predicted')
-plt.xlabel("Time Steps")
-plt.ylabel("Exchange Rate")
-plt.title("Actual vs Predicted Exchange Rate")
-plt.legend()
-plt.show()
+# -----------------------------
+# SHAP Explainability
+# -----------------------------
+background = X[np.random.choice(X.shape[0], 50, replace=False)]
+explainer = shap.DeepExplainer(model, background)
+shap_vals = explainer.shap_values(X[-1:])
 
-# -------------------------------
-# 10. Simple Explainability
-# -------------------------------
-feature_importance = np.mean(np.abs(X_train), axis=(0,1))
-
-plt.figure()
-plt.bar(range(len(feature_importance)), feature_importance)
+importance = np.mean(np.abs(shap_vals[0]), axis=1)[0]
+plt.bar(range(len(importance)), importance)
+plt.title("SHAP Feature Importance")
 plt.xlabel("Feature Index")
-plt.ylabel("Importance Score")
-plt.title("Feature Importance (Approximation)")
+plt.ylabel("Importance")
 plt.show()
