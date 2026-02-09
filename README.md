@@ -1,59 +1,75 @@
-# time_series_forecasting_using_LSTM
-Advanced time series forecasting project using LSTM deep learning model on multivariate exchange rate data, including preprocessing, evaluation metrics, visualization, and explainability.
+# Advanced Time Series Forecasting with LSTM and Explainability
 
-1. Dataset Description
+## 1. Introduction
+This project focuses on advanced multivariate time series forecasting using deep learning. 
+An LSTM (Long Short-Term Memory) network is employed to model temporal dependencies in a multivariate exchange rate dataset. 
+The project emphasizes systematic hyperparameter tuning, robust evaluation, and post-hoc explainability to ensure interpretability and reliability.
 
-The Exchange Rate Time Series dataset from the UCI Machine Learning Repository was used for this project.
+---
 
-The dataset consists of daily exchange rates of multiple currencies over time, making it a multivariate time series dataset. Each column represents a different currency exchange rate. The data exhibits strong temporal dependency, trend, and non-stationary behavior, which makes it suitable for deep learning-based forecasting.
+## 2. Dataset Description
+The Exchange Rate Time Series dataset from the UCI Machine Learning Repository was used. 
+It contains daily exchange rates for multiple currencies, forming a multivariate and non-stationary time series. 
+Each feature represents a currency exchange rate observed over time.
 
-2. Data Preprocessing
+---
 
-Missing values were handled using forward-fill to preserve temporal continuity.
+## 3. Data Preprocessing
+Missing values were handled using forward-fill to preserve temporal continuity.  
+Min-Max scaling was applied to normalize all features into a common range, improving numerical stability during training.  
+A sliding window approach was used, where the previous 30 time steps were used to predict future values.  
+Chronological splitting was strictly maintained to avoid data leakage.
 
-The data was scaled using Min-Max normalization to bring all features into a uniform range, which improves LSTM training stability
+---
 
-3. Model Architecture
+## 4. Handling Non-Stationarity
+The dataset exhibits non-stationary behavior with evolving trends and potential seasonality.  
+LSTM networks inherently handle non-stationarity through gated memory mechanisms that adaptively retain and forget information.  
+Rather than explicit differencing, the model learns temporal patterns directly from sequential data.
 
-A Long Short-Term Memory (LSTM) neural network was selected due to its ability to capture long-term dependencies in time series data.
+---
 
-The model consists of:
+## 5. Model Architecture
+The forecasting model consists of:
+- An LSTM layer with tunable hidden units
+- A fully connected Dense output layer for multivariate prediction
 
-One LSTM layer with 64 units
+The architecture supports multi-output forecasting, allowing simultaneous prediction of all currency exchange rates.
 
-A Dropout layer to reduce overfitting
+---
 
-A Dense output layer to predict the next time step
+## 6. Hyperparameter Tuning using Rolling-Origin Cross-Validation
+Systematic hyperparameter tuning was performed using rolling-origin (walk-forward) time-series cross-validation.  
+For each configuration, the training window was incrementally expanded and validated on subsequent unseen temporal segments.  
+The following hyperparameters were tuned:
+- Number of LSTM units
+- Learning rate
 
-The model was trained using the Adam optimizer and Mean Squared Error loss function.
+The optimal configuration was selected based on the lowest average validation loss across folds.
 
-4. Hyperparameter Tuning Strategy
+---
 
-Hyperparameters such as the number of epochs, batch size, and learning rate were selected based on validation performance. A walk-forward style validation was implicitly followed by maintaining the temporal order of the data during splitting.
+## 7. Evaluation Metrics
+Model performance was assessed using:
+- Mean Absolute Error (MAE)
+- Root Mean Squared Error (RMSE)
+- Mean Absolute Percentage Error (MAPE)
+- Directional Accuracy
 
-5. Evaluation Results
+Directional accuracy measures the model’s ability to correctly predict the direction of change, which is particularly relevant in financial forecasting.
 
-The trained model was evaluated using standard forecasting metrics:
+---
 
-Mean Absolute Error (MAE)
+## 8. Explainability using SHAP
+Post-hoc explainability was implemented using SHAP (SHapley Additive exPlanations) adapted for sequence models.  
+A SHAP DeepExplainer was applied to the trained LSTM model using representative background samples from the training set.  
+SHAP values were aggregated across the temporal dimension to identify feature-level contributions to the predictions.
 
-Root Mean Squared Error (RMSE)
+The analysis revealed that certain currency exchange rates consistently exerted stronger influence, aligning with known economic dependencies among major currencies.
 
-Mean Absolute Percentage Error (MAPE)
+---
 
-
-6. Explainability Analysis
-
-To understand the model's behavior, a feature importance analysis was performed by examining the average magnitude of input values across time steps.
-
-This analysis highlighted which currency exchange rates contributed most significantly to the model's predictions.
-
-Explainability improves trust in the model and provides insight into how different features influence forecasting outcomes.
-
-7. Conclusion
-
-This project demonstrated the application of deep learning for multivariate time series forecasting using an LSTM model.
-
-The model successfully learned temporal dependencies and produced accurate forecasts.
-
-Future improvements may include experimenting with Transformer-based models, more advanced explainability techniques such as SHAP, and multi-step forecasting.
+## 9. Conclusion
+This project demonstrates a robust and interpretable deep learning pipeline for multivariate time series forecasting.  
+By combining systematic time-series cross-validation, multi-output LSTM modeling, and SHAP-based explainability, the approach satisfies advanced forecasting and interpretability requirements.  
+Future work may explore Transformer-based architectures and explicit seasonal decomposition techniques.
