@@ -1,106 +1,124 @@
+# ==========================================================
+# Multivariate Time Series Forecasting using LSTM
+# Dataset: UCI Exchange Rate (auto-loaded)
+# Includes: Metrics, Visualization, SHAP Explainability
+# ==========================================================
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import shap
+import warnings
+warnings.filterwarnings("ignore")
 
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error
+
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 from tensorflow.keras.optimizers import Adam
 
-# -----------------------------
-# Load and preprocess data
-# -----------------------------
-data = pd.read_csv("exchange_rate.csv")
-if 'date' in data.columns:
-    data.drop(columns=['date'], inplace=True)
-data.fillna(method='ffill', inplace=True)
+import shap
 
+# ----------------------------------------------------------
+# 1. Load Dataset (AUTO DOWNLOAD – no file needed)
+# ----------------------------------------------------------
+url = "https://archive.ics.uci.edu/ml/machine-learning-databases/exchange_rate/exchange_rate.txt"
+data = pd.read_csv(url, header=None)
+
+values = data.values
+n_features = values.shape[1]
+
+print("Dataset loaded")
+print("Shape:", values.shape)
+
+# ----------------------------------------------------------
+# 2. Scale Data
+# ----------------------------------------------------------
 scaler = MinMaxScaler()
-scaled = scaler.fit_transform(data)
+scaled_data = scaler.fit_transform(values)
 
+# ----------------------------------------------------------
+# 3. Create Time-Series Sequences
+# ----------------------------------------------------------
 def create_sequences(data, window=30):
     X, y = [], []
-    for i in range(window, len(data)):
-        X.append(data[i-window:i])
-        y.append(data[i])
+    for i in range(len(data) - window):
+        X.append(data[i:i+window])
+        y.append(data[i+window])   # multi-output
     return np.array(X), np.array(y)
 
-X, y = create_sequences(scaled)
+WINDOW_SIZE = 30
+X, y = create_sequences(scaled_data, WINDOW_SIZE)
 
-# -----------------------------
-# Rolling-origin CV
-# -----------------------------
-def rolling_cv(X, y, units_list, lr_list):
-    results = []
-    fold = int(0.15 * len(X))
+# ----------------------------------------------------------
+# 4. Train–Test Split (Time-Based)
+# ----------------------------------------------------------
+split_index = int(0.8 * len(X))
+X_train, X_test = X[:split_index], X[split_index:]
+y_train, y_test = y[:split_index], y[split_index:]
 
-    for units in units_list:
-        for lr in lr_list:
-            losses = []
-            for i in range(fold, len(X)-fold, fold):
-                X_tr, y_tr = X[:i], y[:i]
-                X_val, y_val = X[i:i+fold], y[i:i+fold]
+print("Train shape:", X_train.shape)
+print("Test shape:", X_test.shape)
 
-                model = Sequential([
-                    LSTM(units, input_shape=(X.shape[1], X.shape[2])),
-                    Dense(y.shape[1])
-                ])
-                model.compile(optimizer=Adam(lr), loss="mse")
-                model.fit(X_tr, y_tr, epochs=10, batch_size=32, verbose=0)
-                losses.append(model.evaluate(X_val, y_val, verbose=0))
+# ----------------------------------------------------------
+# 5. Build LSTM Model
+# ----------------------------------------------------------
+model = Sequential()
+model.add(LSTM(64, input_shape=(X_train.shape[1], X_train.shape[2])))
+model.add(Dense(n_features))
 
-            results.append((units, lr, np.mean(losses)))
-    return sorted(results, key=lambda x: x[2])
+model.compile(
+    optimizer=Adam(learning_rate=0.001),
+    loss="mse"
+)
 
-best = rolling_cv(X, y, [32, 64], [0.001, 0.0005])[0]
-units, lr, _ = best
+# ----------------------------------------------------------
+# 6. Train Model
+# ----------------------------------------------------------
+model.fit(
+    X_train,
+    y_train,
+    epochs=25,
+    batch_size=32,
+    verbose=0
+)
 
-# -----------------------------
-# Train final model
-# -----------------------------
-model = Sequential([
-    LSTM(units, input_shape=(X.shape[1], X.shape[2])),
-    Dense(y.shape[1])
-])
-model.compile(optimizer=Adam(lr), loss="mse")
-model.fit(X, y, epochs=25, batch_size=32, verbose=1)
+print("Model training completed")
 
-# -----------------------------
-# Evaluation
-# -----------------------------
-pred = model.predict(X[-200:])
-true = y[-200:]
+# ----------------------------------------------------------
+# 7. Evaluation
+# ----------------------------------------------------------
+y_pred = model.predict(X_test)
 
-pred_inv = scaler.inverse_transform(pred)
-true_inv = scaler.inverse_transform(true)
+mae = mean_absolute_error(y_test, y_pred)
+rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+mape = np.mean(np.abs((y_test - y_pred) / y_test)) * 100
 
-mae = mean_absolute_error(true_inv, pred_inv)
-rmse = np.sqrt(mean_squared_error(true_inv, pred_inv))
+print("\nEvaluation Metrics")
+print("------------------")
+print(f"MAE  : {mae:.4f}")
+print(f"RMSE : {rmse:.4f}")
+print(f"MAPE : {mape:.2f}%")
 
-print("MAE:", mae)
-print("RMSE:", rmse)
-
-# -----------------------------
-# Visualization
-# -----------------------------
-plt.plot(true_inv[:,0], label="Actual")
-plt.plot(pred_inv[:,0], label="Predicted")
-plt.title("Actual vs Predicted (Primary Currency)")
+# ----------------------------------------------------------
+# 8. Visualization
+# ----------------------------------------------------------
+plt.figure(figsize=(10, 4))
+plt.plot(y_test[:100, 0], label="Actual")
+plt.plot(y_pred[:100, 0], label="Predicted")
+plt.title("Actual vs Predicted (Feature 1)")
+plt.xlabel("Time")
+plt.ylabel("Scaled Value")
 plt.legend()
+plt.tight_layout()
 plt.show()
 
-# -----------------------------
-# SHAP Explainability
-# -----------------------------
-background = X[np.random.choice(X.shape[0], 50, replace=False)]
+# ----------------------------------------------------------
+# 9. SHAP Explainability
+# ----------------------------------------------------------
+# Use small background set for speed
+background = X_train[:50]
+test_instance = X_test[:1]
+
 explainer = shap.DeepExplainer(model, background)
-shap_vals = explainer.shap_values(X[-1:])
-
-importance = np.mean(np.abs(shap_vals[0]), axis=1)[0]
-plt.bar(range(len(importance)), importance)
-plt.title("SHAP Feature Importance")
-plt.xlabel("Feature Index")
-plt.ylabel("Importance")
-plt.show()
+shap_values = explainer.shap
